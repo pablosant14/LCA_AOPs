@@ -1,0 +1,18 @@
+# lca_config.yaml
+paths:
+  raw_data_homo: "data/raw/Análisis_métodos_homogéneos.XLS"
+  raw_data_hetero: "data/raw/Análisis_métodos_heterogéneos.XLS"
+  raw_data_icv: "data/raw/ICV_final_corregido.xlsx"
+  results_dir: "results/"
+
+target_categories:
+  - "Climate change"
+  - "Eutrophication, freshwater"
+  - "Human toxicity, non-cancer"
+
+skip_rows:
+  homo: 25
+  hetero: 40
+
+# Estimación del impacto de fabricar 1 kg del polvo catalítico
+catalyst_gwp_per_kg: 50.0
