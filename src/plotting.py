@@ -277,100 +277,120 @@ def plot_impact_heatmap(df, output_name, config):
 # Añadir a src/plotting.py (y pon 'from math import pi' en los imports de arriba si no lo tienes)
 from math import pi
 
+import numpy as np
+import matplotlib.pyplot as plt
+from math import pi
 
-def plot_radar_chart(df, output_name, config):
-    '''Genera un gráfico de radar superponiendo los tratamientos cribados.'''
-    plt.style.use(['science', 'no-latex'])
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+from math import pi
+
+
+def plot_radar_chart(df_scenario, scenario_name, valid_cols, config):
+    plt.style.use('default')
     plt.rcParams.update({"font.family": "Cambria", "font.size": 11, "mathtext.default": "regular"})
 
-    # 1. Normalización para que todas las métricas encajen en el radar (0 a 1)
-    df_norm = df.div(df.max(axis=1), axis=0)
+    target_metrics = config.get('target_categories', [])
+    df_plot = df_scenario.loc[df_scenario.index.isin(target_metrics)].apply(pd.to_numeric, errors='coerce').dropna(
+        how='all')
 
-    # 2. Formateo de los nombres químicos
-    df_norm.columns = [format_chem_text(c) for c in df_norm.columns]
-    categories = df_norm.index.tolist()
+    # NORMALIZACIÓN (de 0 a 1 respecto al máximo)
+    df_norm = df_plot.div(df_plot.max(axis=1), axis=0)
+
+    categories = list(df_norm.index)
     N = len(categories)
 
-    if N < 3:
-        print("Advertencia: El radar necesita al menos 3 categorías de impacto para dibujarse.")
-        return
-
-    # Calcular los ángulos de cada "radio" de la tela de araña
     angles = [n / float(N) * 2 * pi for n in range(N)]
     angles += angles[:1]
 
-    fig, ax = plt.subplots(figsize=(8, 8), subplot_kw=dict(polar=True))
+    # Aumentamos el ancho (10, 8) para dejar sitio a la leyenda a la derecha
+    fig, ax = plt.subplots(figsize=(10, 8), subplot_kw=dict(polar=True))
 
-    # Dibujar un eje por categoría y añadir las etiquetas
-    plt.xticks(angles[:-1], categories, size=10, fontweight='bold')
+    colors = plt.cm.tab10.colors
+    for i, col in enumerate(valid_cols):
+        values = df_norm[col].values.flatten().tolist()
+        values += values[:1]
 
-    # Alinear las etiquetas para que no se pisen con el gráfico
-    ax.tick_params(axis='x', pad=15)
+        label_name = beautify_label(col)  # Aplica tu función de embellecimiento
 
-    # Desactivar las etiquetas del eje Y (las concéntricas) para mayor limpieza
-    ax.set_yticklabels([])
+        ax.plot(angles, values, linewidth=2, linestyle='solid', label=label_name, color=colors[i % len(colors)])
+        ax.fill(angles, values, color=colors[i % len(colors)], alpha=0.15)
 
-    # Dibujar cada tratamiento (columna) en el radar
-    colors = plt.cm.tab10.colors  # Paleta categórica
-    for i, col in enumerate(df_norm.columns):
-        values = df_norm[col].tolist()
-        values += values[:1]  # Cerrar el polígono
+    # FORMATO DE EJES (Sin títulos)
+    plt.xticks(angles[:-1], categories, fontweight='bold', size=11)
 
-        ax.plot(angles, values, linewidth=2, linestyle='solid', label=col, color=colors[i % len(colors)])
-        ax.fill(angles, values, alpha=0.1, color=colors[i % len(colors)])
+    # ⚠️ LA MAGIA ESTÁ AQUÍ: Aleja el texto (Climate change, etc.) del polígono
+    ax.tick_params(axis='x', pad=25)
 
-    plt.title("Multicategory Impact Radar (Normalized)", size=14, fontweight='bold', y=1.1)
-    plt.legend(loc='upper right', bbox_to_anchor=(1.3, 1.1))
+    ax.set_rlabel_position(30)
+    plt.yticks([0.2, 0.4, 0.6, 0.8, 1.0], ["0.2", "0.4", "0.6", "0.8", "Max"], color="grey", size=9)
+    plt.ylim(0, 1.05)
+
+    # ⚠️ LEYENDA A SALVO: Desplazada totalmente a la derecha y centrada verticalmente
+    ax.legend(loc='center left', bbox_to_anchor=(1.15, 0.5), frameon=True, title='Treatment Strategies')
+
+    # Quitamos la línea de contorno exterior para que quede más moderno
+    ax.spines['polar'].set_visible(False)
 
     plt.tight_layout()
-    output_path = os.path.join(config['paths']['results_dir'], f"{output_name}.png")
-    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+
+    output_path = os.path.join(config['paths']['results_dir'], f"Radar_{scenario_name.replace(' ', '_')}.png")
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')  # El tight es clave para no recortar la leyenda
     plt.close()
-    print(f"Gráfico de radar guardado en: {output_path}")
 
-
-def plot_breakeven_curve(df, output_name, config):
-    '''Genera el gráfico de líneas del punto de equilibrio (Break-Even) del catalizador.'''
-    plt.style.use(['science', 'no-latex'])
+def plot_breakeven_curve(df_breakeven, filename, config):
+    plt.style.use('default')
     plt.rcParams.update({"font.family": "Cambria", "font.size": 11, "mathtext.default": "regular"})
 
-    fig, ax = plt.subplots(figsize=(9, 6))
+    categories = df_breakeven['Category'].unique()
+    num_cats = len(categories)
 
-    # Extraer datos
-    x = df.index
-    y_hetero = df['Hetero_LaGa_PAA']
-    y_homo = df['Homo_NaClO_Baseline']
+    # Crear un grid de gráficos (2 filas, 3 columnas máximo para nuestras 5 categorías)
+    cols = 3
+    rows = (num_cats + cols - 1) // cols
 
-    # Dibujar las curvas
-    ax.plot(x, y_hetero, marker='o', linewidth=2.5, color='#8c564b', label='UV-C/LaFeO$_3$-Ga$_2$O$_3$/PAA')
-    ax.plot(x, y_homo, linestyle='--', linewidth=2.5, color='#1f77b4', label='UV-C/NaClO (Baseline)')
+    fig, axes = plt.subplots(rows, cols, figsize=(5 * cols, 4 * rows))
+    axes = axes.flatten()
 
-    # Buscar el punto de corte (Break-even point) matemáticamente
-    # Es el primer ciclo donde el impacto heterogéneo baja del homogéneo
-    corte_idx = df[df['Hetero_LaGa_PAA'] <= df['Homo_NaClO_Baseline']].index.min()
+    for i, cat in enumerate(categories):
+        ax = axes[i]
+        df_cat = df_breakeven[df_breakeven['Category'] == cat]
 
-    if pd.notna(corte_idx):
-        y_corte = df.loc[corte_idx, 'Hetero_LaGa_PAA']
-        ax.plot(corte_idx, y_corte, marker='*', markersize=15, color='#d62728', zorder=5)
-        ax.annotate(f'Break-Even:\nCycle {int(corte_idx)}',
-                    xy=(corte_idx, y_corte), xytext=(corte_idx + 1, y_corte + 2),
-                    arrowprops=dict(facecolor='black', shrink=0.05, width=1.5, headwidth=6),
-                    fontsize=11, fontweight='bold', color='#d62728')
+        # Filtrar datos de cada sistema
+        df_homo = df_cat[df_cat['System'].str.contains('Homogeneous')]
+        df_het = df_cat[df_cat['System'].str.contains('Heterogeneous')]
 
-    # Formato de la Tesis
-    apply_thesis_style(ax)
+        # Pintar línea recta del homogéneo y la curva del heterogéneo
+        ax.plot(df_homo['Cycle'], df_homo['Impact'], label='Homogeneous (NaClO)',
+                color='#1f77b4', linestyle='--', linewidth=2)
+        ax.plot(df_het['Cycle'], df_het['Impact'], label='Heterogeneous (LaGa + PAA)',
+                color='#ff7f0e', marker='o', markersize=5, linewidth=2)
 
-    ax.set_xlabel("Number of Catalyst Reuse Cycles", fontweight='bold')
-    ax.set_ylabel(r"Global Warming Potential (kg CO$_2$ eq/m$^3$)", fontweight='bold')
-    plt.title("Environmental Break-Even Analysis (Catalyst Amortization)", fontweight='bold', pad=15)
+        ax.set_title(cat, fontweight='bold', fontsize=12)
+        ax.set_xlabel('Number of Reuse Cycles', fontweight='bold')
+        ax.set_ylabel('Impact Value', fontweight='bold')
+        ax.set_xticks(df_breakeven['Cycle'].unique())
+        ax.grid(True, linestyle='--', alpha=0.5)
 
-    # Forzar que el eje X muestre números enteros
-    ax.set_xticks(np.arange(1, 16, 2))
+        # Leyenda solo en el primer gráfico para no saturar
+        if i == 0:
+            ax.legend(frameon=True, loc='best')
 
-    plt.legend(loc='upper right')
+    # Ocultar los subgráficos vacíos si sobran (ej. si son 5 categorías y 6 huecos)
+    for j in range(i + 1, len(axes)):
+        fig.delaxes(axes[j])
 
     plt.tight_layout()
-    output_path = os.path.join(config['paths']['results_dir'], f"{output_name}.png")
-    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+
+    results_dir = config['paths']['results_dir']
+    if not os.path.isabs(results_dir):
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        results_dir = os.path.join(base_dir, results_dir)
+
+    os.makedirs(results_dir, exist_ok=True)
+    out_path = os.path.join(results_dir, f"{filename}.png")
+    plt.savefig(out_path, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"Gráfico de Break-Even guardado en: {output_path}")
+
+    print(f"✅ Gráfico de Break-Even guardado en: {out_path}")

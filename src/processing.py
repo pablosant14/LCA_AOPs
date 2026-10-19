@@ -2,32 +2,51 @@
 import pandas as pd
 import yaml
 import numpy as np
+import os
 
 
-def load_config(config_path="config/lca_config.yaml"):
-    '''Carga el archivo de configuración YAML del proyecto.'''
-    with open(config_path, "r", encoding="utf-8") as file:
-        return yaml.safe_load(file)
+def load_config(config_path):
+    with open(config_path, 'r', encoding='utf-8') as f:
+        return yaml.safe_load(f)
 
 
-def clean_sima_pro_data(filepath, skip_rows, target_categories):
-    '''Carga y filtra el Excel bruto de impacto del SimaPro (formatos antiguo .XLS).'''
+def clean_sima_pro_data(filepath, skip_rows, target_categories=None):
+    '''Carga y limpia un archivo de SimaPro, devolviendo un DataFrame indexado por categoría de impacto.'''
     df = pd.read_excel(filepath, sheet_name="Sheet1", skiprows=skip_rows)
 
-    # ========================================================
-    # FIX: Eliminamos explícitamente 'Unidad' y 'V.Máximo'
-    # ========================================================
+    # Eliminar columnas basura de SimaPro
     cols_to_keep = [c for c in df.columns if not c.startswith('Unnamed') and c not in ['V.Máximo', 'Unidad']]
     df = df[cols_to_keep]
 
-    df_filtered = df[df['Categoría de impacto'].isin(target_categories)].copy()
-    df_filtered.set_index('Categoría de impacto', inplace=True)
+    if target_categories:
+        df_filtered = df[df['Categoría de impacto'].isin(target_categories)].copy()
+    else:
+        df_filtered = df.copy()
 
-    # Eliminar filas duplicadas (fantasmas del SimaPro)
+    df_filtered.set_index('Categoría de impacto', inplace=True)
+    # Eliminar filas duplicadas (fantasmas de SimaPro)
     df_filtered = df_filtered[~df_filtered.index.duplicated(keep='first')]
 
     return df_filtered
 
+
+def load_and_merge_sima_data(config):
+    """Carga y fusiona los Excels homogéneo y heterogéneo en una única matriz maestra."""
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+
+    path_homo = os.path.join(base_dir, config['paths']['raw_data_homo'])
+    path_hetero = os.path.join(base_dir, config['paths']['raw_data_hetero'])
+
+    df_homo = clean_sima_pro_data(path_homo, config['skip_rows']['homo'], None)
+    df_hetero = clean_sima_pro_data(path_hetero, config['skip_rows']['hetero'], None)
+
+    # Unir ambas matrices por columnas
+    df_total = pd.concat([df_homo, df_hetero], axis=1)
+
+    # Eliminar columnas duplicadas si algún nombre se repetía entre archivos
+    df_total = df_total.loc[:, ~df_total.columns.duplicated()]
+
+    return df_total
 
 def load_icv_data(filepath):
     '''
@@ -206,47 +225,38 @@ def dynamic_impact_filter(df_total, target_metric='Climate change', top_n=4):
 
     return df_cribado
 
-def calculate_breakeven_cycles(df_icv, df_homo, df_hetero, config):
-    '''
-    Calcula la curva de amortización ambiental (GWP) de un proceso heterogéneo
-    frente a un proceso homogéneo base, variando los ciclos de reúso (1 a 15).
-    '''
-    # 1. Definimos los contendientes (puedes cambiarlos según lo que decidas en la tesis)
-    hetero_process = '2.5 W/m2 UV-C  + 0.5 g/L LaGa + 0.5 mM PAA'
-    homo_process = '0.75 mM NaClO'
 
-    # Columnas mapeadas en SimaPro
-    col_hetero_sima = '2,5 W/m2 UV-C + 0,5 g/L LaGa + 0,5 mM PAA'
-    col_homo_sima = '[HOM] NaClO 0,75mM - Philips 15W'
+def calculate_breakeven_cycles(df, col_homo, col_hetero, col_powder, cycles=10):
+    """
+    Calcula el impacto diluido del reuso del catalizador en N ciclos.
+    Impacto(n) = Impacto_Operativo (Elec+PAA) + (Impacto_Polvo / n)
+    """
+    for col in [col_homo, col_hetero, col_powder]:
+        if col not in df.columns:
+            raise ValueError(f"🚨 Error: La columna '{col}' no se encuentra en la matriz unificada.")
 
-    # 2. Extraer el impacto base de SimaPro (Sabemos que están en 3 ciclos y 1 ciclo respect.)
-    gwp_hetero_3cycles = float(df_hetero.loc['Climate change', col_hetero_sima])
-    gwp_homo_constant = float(df_homo.loc['Climate change', col_homo_sima])
+    impact_homo = df[col_homo].apply(pd.to_numeric, errors='coerce')
+    # Juanjo modeló esto SÓLO con la electricidad y el PAA, no restamos nada
+    impact_hetero_op = df[col_hetero].apply(pd.to_numeric, errors='coerce')
+    impact_powder = df[col_powder].apply(pd.to_numeric, errors='coerce')
 
-    # ========================================================
-    # INGENIERÍA INVERSA DEL IMPACTO DEL CATALIZADOR
-    # ========================================================
-    # Dosis total de catalizador en el reactor = 0.5 kg/m3.
-    # Impacto estimado de fabricar 1 kg de LaGa (kg CO2 eq/kg).
-    # TODO: Ajustar este valor con el nodo puro de SimaPro de tu TFM.
-    catalyst_gwp_per_kg = config.get('catalyst_gwp_per_kg', 50.0)
+    results = []
+    for n in range(1, cycles + 1):
+        # El impacto de fabricar el polvo se divide entre los usos y se suma al operativo
+        current_hetero = impact_hetero_op + (impact_powder / n)
 
-    total_catalyst_gwp = 0.5 * catalyst_gwp_per_kg
+        for cat in df.index:
+            results.append({
+                'Category': cat,
+                'Cycle': n,
+                'System': 'Homogeneous (NaClO)',
+                'Impact': impact_homo[cat]
+            })
+            results.append({
+                'Category': cat,
+                'Cycle': n,
+                'System': 'Heterogeneous (LaGa + PAA)',
+                'Impact': current_hetero[cat]
+            })
 
-    # Si el SimaPro se calculó para 3 ciclos, el impacto reportado es:
-    # GWP_SimaPro = GWP_Operacion + (GWP_Catalizador_Total / 3)
-    # Despejamos el impacto operativo (luz + PAA + etc):
-    gwp_operativo = gwp_hetero_3cycles - (total_catalyst_gwp / 3.0)
-
-    # 3. Proyectar la curva para N ciclos (de 1 a 15)
-    ciclos = np.arange(1, 16)
-    gwp_hetero_curve = gwp_operativo + (total_catalyst_gwp / ciclos)
-
-    # 4. Empaquetar resultados
-    df_breakeven = pd.DataFrame({
-        'Ciclos': ciclos,
-        'Hetero_LaGa_PAA': gwp_hetero_curve,
-        'Homo_NaClO_Baseline': np.repeat(gwp_homo_constant, len(ciclos))
-    }).set_index('Ciclos')
-
-    return df_breakeven
+    return pd.DataFrame(results)

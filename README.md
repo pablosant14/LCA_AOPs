@@ -137,7 +137,7 @@ Check the `results/` directory for the generated high-resolution PNGs ready for 
 ## 👨‍🔬 Author
 
 **Pablo Santiago-Espiñeira**  
-Ph.D. Candidate in Chemical Engineering  
+Ph.D. Candidate in Environmental, Chemical and Materials Engineering  
 Universidad Politécnica de Madrid (UPM)
 
 ## 📄 License
