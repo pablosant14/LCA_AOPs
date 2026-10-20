@@ -3,7 +3,7 @@ paths:
   raw_data_hetero: "data/raw/Análisis_métodos_heterogéneos.xlsx"
   raw_data_icv: "data/raw/ICV_final_corregido.xlsx"
   results_dir: "results"
-
+  
 skip_rows:
   homo: 25
   hetero: 40

@@ -88,10 +88,9 @@ def plot_icv_dual_axis(df, output_name, config, top_n=12):
     df_temp = df[cols_plot].copy()
 
     # 3. Orden estético: por consumo eléctrico de menor a mayor
-    # FIX TURN 23: Columna Electricidad Total garantizada por el cargador genérico turn 23.
     df_sorted = df_temp.sort_values(by='Electricidad Total (kWh/m3)', ascending=True)
 
-    # 4. head(top_n) dinámico para que el gráfico sea legible (eliminando la carallada del Turn 17 del loader)
+    # 4. head(top_n) dinámico para que el gráfico sea legible
     df_plot = df_sorted.head(top_n).copy()
 
     # ========================================================
@@ -102,14 +101,13 @@ def plot_icv_dual_axis(df, output_name, config, top_n=12):
     width = 0.35
 
     # --- EJE IZQUIERDO (Electricidad kWh/m3) ---
-    # Usamos la columna numérica bruta 'Electricidad Total (kWh/m3)'
     bar1 = ax1.bar(x - width / 2, df_plot['Electricidad Total (kWh/m3)'], width,
                    label='Electricity (kWh/m$^3$)', color='#1f77b4', edgecolor='black')
 
     ax1.set_ylabel('Total Electricity (kWh/m$^3$)', color='#1f77b4', fontweight='bold')
     ax1.tick_params(axis='y', labelcolor='#1f77b4')
     ax1.set_xticks(x)
-    # Etiquetas de texto de 'Experimento' (Índice de df_plot)
+    # Etiquetas de texto de 'Experimento'
     ax1.set_xticklabels(df_plot.index, rotation=45, ha='right')
 
     # --- EJE DERECHO (Masas Químicas kg/m3) ---
@@ -123,18 +121,19 @@ def plot_icv_dual_axis(df, output_name, config, top_n=12):
                    bottom=df_plot['Masa Comercial (kg/m3)'],
                    label='Catalyst Mass (kg/m$^3$)', color='#8c564b', edgecolor='black')
 
-    # ... ylabels, spines, ticks, legend logic same turn 17/22, save clean ...
     ax2.set_ylabel('Chemical Input Mass (kg/m$^3$)', color='#d62728', fontweight='bold')
 
-    # Spines y Ticks logic dual axis de Turn 17/22 general generalization generalized generalized standardised dynamic standarized logic general generalization dynamic standardization standardized generalized logic generalization standardization.
+    # Spines y Ticks logic dual axis
     ax1.spines['top'].set_visible(True)
     ax1.spines['right'].set_visible(True)
     ax2.spines['top'].set_visible(True)
     ax2.spines['right'].set_visible(True)
-    # spikes off logic standard general standardization
+
+    # Eje principal (izquierdo): Ticks abajo y a la izquierda
     ax1.tick_params(which='both', top=False, right=False, left=True, bottom=True)
-    # dual ticks dynamic turn 17/22 logic
-    ax2.tick_params(which='both', top=False, bottom=False, left=False, right=False, labelright=True)
+
+    # Eje secundario (derecho): EXCEPCIÓN A LA REGLA -> right=True para ver las marcas del eje
+    ax2.tick_params(which='both', top=False, bottom=False, left=False, right=True, labelright=True)
 
     plt.title("Life Cycle Inventory: Energy vs Mass Inputs", fontweight='bold', pad=15)
 

@@ -11,11 +11,23 @@ def load_config(config_path):
 
 
 def clean_sima_pro_data(filepath, skip_rows, target_categories=None):
-    '''Carga y limpia un archivo de SimaPro, devolviendo un DataFrame indexado por categoría de impacto.'''
-    df = pd.read_excel(filepath, sheet_name="Sheet1", skiprows=skip_rows)
+    '''Carga y limpia un archivo de SimaPro, buscando la cabecera dinámicamente.'''
 
-    # Eliminar columnas basura de SimaPro
-    cols_to_keep = [c for c in df.columns if not c.startswith('Unnamed') and c not in ['V.Máximo', 'Unidad']]
+    # 1. Cargamos el excel sin cabecera para rastrear dónde está la buena
+    df_raw = pd.read_excel(filepath, sheet_name="Sheet1", header=None)
+
+    start_row = 0
+    # Buscamos en las primeras 60 filas dónde está el texto "Categoría de impacto"
+    for i in range(min(60, len(df_raw))):
+        if str(df_raw.iloc[i, 0]).startswith("Categoría de impacto"):
+            start_row = i
+            break
+
+    # 2. Ahora sí, cargamos el dataframe real saltando exactamente la basura
+    df = pd.read_excel(filepath, sheet_name="Sheet1", skiprows=start_row)
+
+    # 3. Eliminar columnas basura de SimaPro (forzando str)
+    cols_to_keep = [c for c in df.columns if not str(c).startswith('Unnamed') and c not in ['V.Máximo', 'Unidad']]
     df = df[cols_to_keep]
 
     if target_categories:
@@ -24,6 +36,7 @@ def clean_sima_pro_data(filepath, skip_rows, target_categories=None):
         df_filtered = df.copy()
 
     df_filtered.set_index('Categoría de impacto', inplace=True)
+
     # Eliminar filas duplicadas (fantasmas de SimaPro)
     df_filtered = df_filtered[~df_filtered.index.duplicated(keep='first')]
 
