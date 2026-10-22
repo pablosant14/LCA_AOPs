@@ -1,7 +1,7 @@
 paths:
   raw_data_homo: "data/raw/Análisis_métodos_homogéneos.xlsx"
   raw_data_hetero: "data/raw/Análisis_métodos_heterogéneos.xlsx"
-  raw_data_icv: "data/raw/ICV_final_corregido.xlsx"
+  raw_data_icv: "data/raw/Datos_finales.xlsx"
   results_dir: "results"
   
 skip_rows:
