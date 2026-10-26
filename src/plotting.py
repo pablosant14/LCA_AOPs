@@ -71,116 +71,210 @@ def plot_impact_comparison(df, output_name, config):
 
 
 def plot_icv_dual_axis(df, output_name, config, top_n=12):
-    '''Genera el gráfico de barras de inventario (ICV) de doble eje (Dual-Axis) de tesis, controlando el procesado dinámicamente dentro del plotter.'''
-    plt.style.use(['science', 'no-latex'])
+    '''Genera dos gráficos de barras de inventario (ICV) de doble eje (Dual-Axis) de tesis: Homo y Hetero.'''
+    try:
+        plt.style.use(['science', 'no-latex'])
+    except OSError:
+        plt.style.use('default')
+
     plt.rcParams.update({"font.family": "Cambria", "font.size": 11, "mathtext.default": "regular"})
 
-    # Limpiar los nombres de los experimentos (eje X)
-    df.index = [format_chem_text(idx) for idx in df.index]
+    # =========================================================================
+    # TÍTULOS HARDCODEABLES (Editables a tu gusto. Usa \n para saltar de línea)
+    # =========================================================================
+    titulo_homo = "A) Life Cycle Inventory: Energy vs Mass Inputs"
+    titulo_hetero = "Life Cycle Inventory: Energy vs Mass Inputs"
 
-    # ========================================================
-    # PROCESADO DINÁMICO DENTRO DEL PINTOR (para este plot específico)
-    # ========================================================
-    # 1. Aseguramos que 'Experimento' es el índice (asumiendo cargado con set_index en processing.py)
+    # Limpiar los nombres de los experimentos (eje X) de forma dinámica
+    df_clean = df.copy()
+    df_clean.index = [format_chem_text(str(idx)) for idx in df_clean.index]
 
-    # 2. Subsetear solo las columnas numéricas clave de inventario de recursos
-    cols_plot = ['Electricidad Total (kWh/m3)', 'Masa Comercial (kg/m3)', 'Masa Cat. (kg/m3)']
-    df_temp = df[cols_plot].copy()
+    # Dividir universos: Homo vs Hetero (Usamos Equipo Asignado o Masa de Catalizador como plan B)
+    if 'Equipo Asignado' in df_clean.columns:
+        df_clean['Equipo Asignado'] = df_clean['Equipo Asignado'].fillna('')
+        df_homo = df_clean[df_clean['Equipo Asignado'].str.contains('Philips', case=False)].copy()
+        df_hetero = df_clean[df_clean['Equipo Asignado'].str.contains('Apria|LED', case=False)].copy()
+    else:
+        # Fallback brutal si falta la columna equipo en el Excel
+        if 'Masa Cat. (kg/m3)' in df_clean.columns:
+            df_homo = df_clean[df_clean['Masa Cat. (kg/m3)'] == 0].copy()
+            df_hetero = df_clean[df_clean['Masa Cat. (kg/m3)'] > 0].copy()
+        else:
+            df_homo = df_clean.copy()
+            df_hetero = pd.DataFrame()
 
-    # 3. Orden estético: por consumo eléctrico de menor a mayor
-    df_sorted = df_temp.sort_values(by='Electricidad Total (kWh/m3)', ascending=True)
+    def _draw_plot(df_subset, suffix, is_hetero, custom_title):
+        """Subfunción interna para fabricar el gráfico dependiendo del universo."""
+        if df_subset.empty:
+            return
 
-    # 4. head(top_n) dinámico para que el gráfico sea legible
-    df_plot = df_sorted.head(top_n).copy()
+        # Definimos las columnas base
+        cols_plot = ['Electricidad Total (kWh/m3)', 'Masa Comercial (kg/m3)']
+        if is_hetero and 'Masa Cat. (kg/m3)' in df_subset.columns:
+            cols_plot.append('Masa Cat. (kg/m3)')
 
-    # ========================================================
-    # PLOTTING con la matriz df_plot de campeones estéticos
-    # ========================================================
-    fig, ax1 = plt.subplots(figsize=(12, 6))
-    x = np.arange(len(df_plot.index))
-    width = 0.35
+        # 1. FILTRO ANTI-FANTASMAS
+        df_temp = df_subset[cols_plot].apply(pd.to_numeric, errors='coerce').fillna(0)
+        df_temp = df_temp.loc[(df_temp > 0).any(axis=1)]
 
-    # --- EJE IZQUIERDO (Electricidad kWh/m3) ---
-    bar1 = ax1.bar(x - width / 2, df_plot['Electricidad Total (kWh/m3)'], width,
-                   label='Electricity (kWh/m$^3$)', color='#1f77b4', edgecolor='black')
+        if df_temp.empty:
+            return
 
-    ax1.set_ylabel('Total Electricity (kWh/m$^3$)', color='#1f77b4', fontweight='bold')
-    ax1.tick_params(axis='y', labelcolor='#1f77b4')
-    ax1.set_xticks(x)
-    # Etiquetas de texto de 'Experimento'
-    ax1.set_xticklabels(df_plot.index, rotation=45, ha='right')
+        # 2. Orden estético: por consumo eléctrico de menor a mayor
+        df_sorted = df_temp.sort_values(by='Electricidad Total (kWh/m3)', ascending=True)
 
-    # --- EJE DERECHO (Masas Químicas kg/m3) ---
-    ax2 = ax1.twinx()
+        # 3. head(top_n) dinámico
+        df_plot = df_sorted.head(top_n).copy()
 
-    # Masa de Reactivo Comercial (kg/m3)
-    bar2 = ax2.bar(x + width / 2, df_plot['Masa Comercial (kg/m3)'], width,
-                   label='Reagent Mass (kg/m$^3$)', color='#ff7f0e', edgecolor='black')
-    # Masa de Catalizador (kg/m3) apilada encima del reactivo
-    bar3 = ax2.bar(x + width / 2, df_plot['Masa Cat. (kg/m3)'], width,
-                   bottom=df_plot['Masa Comercial (kg/m3)'],
-                   label='Catalyst Mass (kg/m$^3$)', color='#8c564b', edgecolor='black')
+        fig, ax1 = plt.subplots(figsize=(10, 6))
+        x = np.arange(len(df_plot.index))
+        width = 0.35
 
-    ax2.set_ylabel('Chemical Input Mass (kg/m$^3$)', color='#d62728', fontweight='bold')
+        # --- EJE IZQUIERDO (Electricidad kWh/m3) ---
+        bar1 = ax1.bar(x - width / 2, df_plot['Electricidad Total (kWh/m3)'], width,
+                       label='Electricity (kWh/m$^3$)', color='#1f77b4', edgecolor='black')
 
-    # Spines y Ticks logic dual axis
-    ax1.spines['top'].set_visible(True)
-    ax1.spines['right'].set_visible(True)
-    ax2.spines['top'].set_visible(True)
-    ax2.spines['right'].set_visible(True)
+        ax1.set_ylabel('Total Electricity (kWh/m$^3$)', color='#1f77b4', fontweight='bold')
+        ax1.tick_params(axis='y', labelcolor='#1f77b4')
+        ax1.set_xticks(x)
 
-    # Eje principal (izquierdo): Ticks abajo y a la izquierda
-    ax1.tick_params(which='both', top=False, right=False, left=True, bottom=True)
+        # Dinamismo absoluto de nombres: Toma el index de df_plot que viene del Excel de Juanjo
+        ax1.set_xticklabels(df_plot.index, rotation=45, ha='right')
 
-    # Eje secundario (derecho): EXCEPCIÓN A LA REGLA -> right=True para ver las marcas del eje
-    ax2.tick_params(which='both', top=False, bottom=False, left=False, right=True, labelright=True)
+        # --- EJE DERECHO (Masas Químicas kg/m3) ---
+        ax2 = ax1.twinx()
 
-    plt.title("Life Cycle Inventory: Energy vs Mass Inputs", fontweight='bold', pad=15)
+        # Masa de Reactivo Comercial (kg/m3)
+        bar2 = ax2.bar(x + width / 2, df_plot['Masa Comercial (kg/m3)'], width,
+                       label='Reagent Mass (kg/m$^3$)', color='#ff7f0e', edgecolor='black')
 
-    lines_labels = [ax.get_legend_handles_labels() for ax in [ax1, ax2]]
-    lines, labels = [sum(lol, []) for lol in zip(*lines_labels)]
-    ax1.legend(lines, labels, loc='upper left', bbox_to_anchor=(1.10, 1))
+        # Masa de Catalizador (kg/m3) SOLO se renderiza y añade a la leyenda para Heterogéneos
+        if is_hetero and 'Masa Cat. (kg/m3)' in cols_plot:
+            bar3 = ax2.bar(x + width / 2, df_plot['Masa Cat. (kg/m3)'], width,
+                           bottom=df_plot['Masa Comercial (kg/m3)'],
+                           label='Catalyst Mass (kg/m$^3$)', color='#8c564b', edgecolor='black')
 
-    plt.tight_layout()
-    output_path = os.path.join(config['paths']['results_dir'], f"{output_name}.png")
-    plt.savefig(output_path, dpi=300, bbox_inches='tight')
-    plt.close()
+        ax2.set_ylabel('Chemical Input Mass (kg/m$^3$)', color='#d62728', fontweight='bold')
+
+        # Spines logic dual axis
+        ax1.spines['top'].set_visible(True)
+        ax1.spines['right'].set_visible(True)
+        ax2.spines['top'].set_visible(True)
+        ax2.spines['right'].set_visible(True)
+
+        # Reglas tesis UPM
+        try:
+            apply_thesis_style(ax1)
+        except NameError:
+            ax1.tick_params(which='both', top=False, right=False, left=True, bottom=True)
+
+        # Eje secundario (derecho): EXCEPCIÓN A LA REGLA -> right=True para ver las marcas
+        ax2.tick_params(which='both', top=False, bottom=False, left=False, right=True, labelright=True)
+
+        # Usamos la variable inyectada para el título
+        plt.title(custom_title, fontweight='bold', pad=15)
+
+        # Unificación matemática de leyendas (solo capturará lo que realmente se haya dibujado)
+        lines_labels = [ax.get_legend_handles_labels() for ax in [ax1, ax2]]
+        lines, labels = [sum(lol, []) for lol in zip(*lines_labels)]
+        ax1.legend(lines, labels, loc='upper left', bbox_to_anchor=(1.10, 1))
+
+        plt.tight_layout()
+
+        results_dir = config['paths']['results_dir']
+        if not os.path.isabs(results_dir):
+            base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+            results_dir = os.path.join(base_dir, results_dir)
+        os.makedirs(results_dir, exist_ok=True)
+
+        output_path = os.path.join(results_dir, f"{output_name}_{suffix}.png")
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f"✅ Gráfico ICV guardado: {output_path}")
+
+    # Ejecutamos el motor inyectando los títulos respectivos
+    _draw_plot(df_homo, "Homogeneous", is_hetero=False, custom_title=titulo_homo)
+    _draw_plot(df_hetero, "Heterogeneous", is_hetero=True, custom_title=titulo_hetero)
 
 
 def plot_relative_contribution(df_pct, output_name, config):
     '''Genera el gráfico de barras apiladas al 100% (Contribution) disgregando energía de tesis Q1.'''
-    plt.style.use(['science', 'no-latex'])
+    try:
+        plt.style.use(['science', 'no-latex'])
+    except OSError:
+        plt.style.use('default')
+
     plt.rcParams.update({"font.family": "Cambria", "font.size": 11, "mathtext.default": "regular"})
 
-    df_pct.index = [format_chem_text(idx) for idx in df_pct.index]
+    # =========================================================================
+    # TÍTULOS HARDCODEABLES (Editables a tu gusto. Usa \n para saltar de línea)
+    # =========================================================================
+    if "Homogeneous" in output_name:
+        custom_title = "(B) Disaggregated relative contribution of input phases (electricity vs. chemical reagents) for the homogeneous systems"
+    elif "Heterogeneous" in output_name:
+        custom_title = ""
+    else:
+        custom_title = "Disaggregated Resource Inventory Contribution\n(All Processes)"
 
-    fig, ax = plt.subplots(figsize=(9, 6))
+    # Limpiamos nombres del eje X
+    df_clean = df_pct.copy()
+    df_clean.index = [format_chem_text(str(idx)) for idx in df_clean.index]
 
-    # 4 Colores Q1: UV-C (Azul oscuro), Agitación (Azul claro), Químicos (Naranja), Catalizador (Marrón)
-    colors = ['#1f77b4', '#aec7e8', '#ff7f0e', '#8c564b']
+    # ========================================================
+    # 1. PURGA DINÁMICA DE FANTASMAS (Elimina Catalizador si es 0%)
+    # ========================================================
+    # Solo conservamos las columnas que aporten algo (>0) al sistema
+    df_plot = df_clean.loc[:, (df_clean > 0).any(axis=0)]
+
+    # ========================================================
+    # 2. CANDADO DE COLORES
+    # ========================================================
+    color_map = {
+        'Electricity (UV-C)': '#1f77b4',  # Azul oscuro
+        'Electricity (Stirring)': '#aec7e8',  # Azul claro
+        'Chemical Reagents': '#ff7f0e',  # Naranja
+        'Catalyst': '#8c564b'  # Marrón
+    }
+
+    # Mapeamos los colores exclusivamente para las columnas que han sobrevivido
+    plot_colors = [color_map.get(col, '#333333') for col in df_plot.columns]
+
+    fig, ax = plt.subplots(figsize=(10, 6))
 
     # Gráfico apilado (stacked=True) al 100%
-    df_pct.plot(kind='bar', stacked=True, color=colors, ax=ax, edgecolor='black', width=0.6)
+    df_plot.plot(kind='bar', stacked=True, color=plot_colors, ax=ax, edgecolor='black', width=0.6)
 
     ax.set_ylabel("Relative Input Contribution (%)", fontweight='bold')
 
-    apply_thesis_style(ax)
+    # Aplicar estilo cerrado de la tesis
+    try:
+        apply_thesis_style(ax)
+    except NameError:
+        ax.tick_params(which='both', top=False, right=False, left=True, bottom=True)
 
     # Límite fijo al 100%
     ax.set_ylim(0, 100)
 
-    plt.title("Disaggregated Resource Inventory Contribution", fontweight='bold', pad=15)
+    # Usamos el título hardcodeado desde arriba
+    plt.title(custom_title, fontweight='bold', pad=15)
+
     plt.xticks(rotation=45, ha='right')
 
     # Leyenda fuera de la caja perimetral
-    plt.legend(title="Input Phase", bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.legend(title="Input Phase", bbox_to_anchor=(1.05, 1), loc='upper left', frameon=True)
 
     plt.tight_layout()
-    output_path = os.path.join(config['paths']['results_dir'], f"{output_name}.png")
+
+    results_dir = config['paths']['results_dir']
+    if not os.path.isabs(results_dir):
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        results_dir = os.path.join(base_dir, results_dir)
+    os.makedirs(results_dir, exist_ok=True)
+
+    output_path = os.path.join(results_dir, f"{output_name}.png")
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"Gráfico de contribución disgregado al 100% guardado en: {output_path}")
-
+    print(f"✅ Gráfico de contribución guardado en: {output_path}")
 
 # Añadir al final de src/plotting.py
 

@@ -1,15 +1,25 @@
 # scripts/analyze_breakeven.py
 import sys
 import os
+import re
 import pandas as pd
 import matplotlib.pyplot as plt
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.processing import load_config, clean_sima_pro_data
+from src.plotting import apply_thesis_style
+
+
+def beautify_label(text):
+    text = str(text).replace('(del proyecto 00_TFM_Juanjo)', '').strip()
+    text = re.sub(r'H2O2', r'H$_2$O$_2$', text)
+    text = re.sub(r'Ga2O3', r'Ga$_2$O$_3$', text)
+    text = re.sub(r'CO2', r'CO$_2$', text)
+    text = re.sub(r'W/m2', r'W/m$^2$', text)
+    return text
 
 
 def get_dynamic_column(df, required_kws, exclude_kws=None):
-    """Busca columnas por palabras clave para el heterogéneo y el polvo."""
     if exclude_kws is None: exclude_kws = []
     for col in df.columns:
         c_upper = str(col).upper()
@@ -19,7 +29,6 @@ def get_dynamic_column(df, required_kws, exclude_kws=None):
 
 
 def calculate_dynamic_breakeven(df, col_homo, col_hetero, col_powder, cycles=10):
-    """Calcula el impacto diluido del reuso del catalizador en N ciclos."""
     for col in [col_homo, col_hetero, col_powder]:
         if col not in df.columns:
             raise ValueError(f"🚨 Error: La columna '{col}' no se encuentra en la matriz unificada.")
@@ -46,7 +55,11 @@ def calculate_dynamic_breakeven(df, col_homo, col_hetero, col_powder, cycles=10)
 
 
 def plot_dynamic_breakeven(df_breakeven, filename, config):
-    plt.style.use('default')
+    try:
+        plt.style.use(['science', 'no-latex'])
+    except OSError:
+        plt.style.use('default')
+
     plt.rcParams.update({"font.family": "Cambria", "font.size": 11, "mathtext.default": "regular"})
 
     categories = df_breakeven['Category'].unique()
@@ -54,7 +67,6 @@ def plot_dynamic_breakeven(df_breakeven, filename, config):
     cols = 3
     rows = (num_cats + cols - 1) // cols
 
-    # Fix del error de sintaxis en figsize aplicado
     fig, axes = plt.subplots(rows, cols, figsize=(5 * cols, 4 * rows))
     axes = axes.flatten()
 
@@ -65,9 +77,11 @@ def plot_dynamic_breakeven(df_breakeven, filename, config):
         df_homo = df_cat[df_cat['System'] == 'Homogeneous_Champion']
         df_het = df_cat[df_cat['System'] == 'Heterogeneous_Target']
 
-        # Usamos los nombres reales para la leyenda
-        label_homo = f"Best Homogeneous\n({df_homo['Label_Homo'].iloc[0]})"
-        label_het = f"Heterogeneous\n({df_het['Label_Hetero'].iloc[0]})"
+        nombre_homo = beautify_label(df_homo['Label_Homo'].iloc[0])
+        nombre_het = beautify_label(df_het['Label_Hetero'].iloc[0])
+
+        label_homo = f"Best Homogeneous\n({nombre_homo})"
+        label_het = f"Heterogeneous\n({nombre_het})"
 
         ax.plot(df_homo['Cycle'], df_homo['Impact'], label=label_homo, color='#1f77b4', linestyle='--', linewidth=2)
         ax.plot(df_het['Cycle'], df_het['Impact'], label=label_het, color='#ff7f0e', marker='o', markersize=5,
@@ -77,10 +91,15 @@ def plot_dynamic_breakeven(df_breakeven, filename, config):
         ax.set_xlabel('Number of Reuse Cycles', fontweight='bold')
         ax.set_ylabel('Impact Value', fontweight='bold')
         ax.set_xticks(df_breakeven['Cycle'].unique())
-        ax.grid(True, linestyle='--', alpha=0.5)
 
-        if i == 0:
-            ax.legend(frameon=True, loc='best', fontsize=9)
+        ax.grid(False)
+
+        try:
+            apply_thesis_style(ax)
+        except NameError:
+            ax.tick_params(which='both', top=False, right=False, left=True, bottom=True)
+
+        ax.legend(frameon=True, loc='best', fontsize=9)
 
     for j in range(i + 1, len(axes)):
         fig.delaxes(axes[j])
@@ -120,7 +139,6 @@ def main():
 
     print("Buscando dinámicamente los contendientes...")
 
-    # 1. EL CAMPEÓN HOMOGÉNEO (El que tenga menor Cambio Climático)
     if 'Climate change' in df_homo.index:
         cc_impacts = df_homo.loc['Climate change'].apply(pd.to_numeric, errors='coerce')
         col_homo = cc_impacts.idxmin()
@@ -128,12 +146,11 @@ def main():
     else:
         raise ValueError("No se encuentra 'Climate change' en la matriz para determinar el campeón.")
 
-    # 2. El sistema completo (Heterogéneo LaGa + PAA)
-    col_hetero = get_dynamic_column(df_total, ['LAGA', 'PAA'])
+    col_hetero = get_dynamic_column(df_total, ['LAGA', '0,5 MM PAA'])
     print(f"  -> Sistema Heterogéneo detectado: {col_hetero}")
 
-    # 3. El impacto del polvo puro (LaGa sin oxidantes operativos ni luz)
-    col_powder = get_dynamic_column(df_total, ['LAGA'], exclude_kws=['PAA', 'PS', 'PMS', 'H2O2', 'UV', 'W/M2'])
+    # Exclusión relajada para permitir atrapar la luz UV en el polvo base
+    col_powder = get_dynamic_column(df_total, ['LAGA'], exclude_kws=['PAA', 'PS', 'PMS', 'H2O2'])
     print(f"  -> Polvo de catalizador detectado: {col_powder}")
 
     print("Calculando amortización del catalizador...")
