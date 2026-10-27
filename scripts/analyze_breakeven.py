@@ -4,6 +4,7 @@ import os
 import re
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from src.processing import load_config, clean_sima_pro_data
@@ -62,15 +63,30 @@ def plot_dynamic_breakeven(df_breakeven, filename, config):
 
     plt.rcParams.update({"font.family": "Cambria", "font.size": 11, "mathtext.default": "regular"})
 
+    # Diccionario de unidades estándar para inyectar en el eje Y
+    unit_map = {
+        'Climate change': 'kg CO$_2$ eq',
+        'Human toxicity, non-cancer': 'CTUh',
+        'Acidification': 'mol H$^+$ eq',
+        'Eutrophication, freshwater': 'kg P eq',
+        'Resource use, fossils': 'MJ'
+    }
+
     categories = df_breakeven['Category'].unique()
     num_cats = len(categories)
-    cols = 3
-    rows = (num_cats + cols - 1) // cols
 
-    fig, axes = plt.subplots(rows, cols, figsize=(5 * cols, 4 * rows))
-    axes = axes.flatten()
+    fig = plt.figure(figsize=(16, 9))
+    gs = gridspec.GridSpec(2, 6, figure=fig)
+    axes = []
 
-    for i, cat in enumerate(categories):
+    # Asignación de posiciones simétricas (3 arriba, 2 centrados abajo)
+    if num_cats > 0: axes.append(fig.add_subplot(gs[0, 0:2]))
+    if num_cats > 1: axes.append(fig.add_subplot(gs[0, 2:4]))
+    if num_cats > 2: axes.append(fig.add_subplot(gs[0, 4:6]))
+    if num_cats > 3: axes.append(fig.add_subplot(gs[1, 1:3]))
+    if num_cats > 4: axes.append(fig.add_subplot(gs[1, 3:5]))
+
+    for i, cat in enumerate(categories[:5]):
         ax = axes[i]
         df_cat = df_breakeven[df_breakeven['Category'] == cat]
 
@@ -81,7 +97,7 @@ def plot_dynamic_breakeven(df_breakeven, filename, config):
         nombre_het = beautify_label(df_het['Label_Hetero'].iloc[0])
 
         label_homo = f"Best Homogeneous\n({nombre_homo})"
-        label_het = f"Heterogeneous\n({nombre_het})"
+        label_het = f"Best Heterogeneous\n({nombre_het})"
 
         ax.plot(df_homo['Cycle'], df_homo['Impact'], label=label_homo, color='#1f77b4', linestyle='--', linewidth=2)
         ax.plot(df_het['Cycle'], df_het['Impact'], label=label_het, color='#ff7f0e', marker='o', markersize=5,
@@ -89,9 +105,12 @@ def plot_dynamic_breakeven(df_breakeven, filename, config):
 
         ax.set_title(cat, fontweight='bold', fontsize=12)
         ax.set_xlabel('Number of Reuse Cycles', fontweight='bold')
-        ax.set_ylabel('Impact Value', fontweight='bold')
-        ax.set_xticks(df_breakeven['Cycle'].unique())
 
+        # Asignación dinámica de la unidad
+        unit = unit_map.get(cat, 'Units')
+        ax.set_ylabel(f'Impact Value ({unit})', fontweight='bold')
+
+        ax.set_xticks(df_breakeven['Cycle'].unique())
         ax.grid(False)
 
         try:
@@ -100,9 +119,6 @@ def plot_dynamic_breakeven(df_breakeven, filename, config):
             ax.tick_params(which='both', top=False, right=False, left=True, bottom=True)
 
         ax.legend(frameon=True, loc='best', fontsize=9)
-
-    for j in range(i + 1, len(axes)):
-        fig.delaxes(axes[j])
 
     plt.tight_layout()
 
@@ -122,7 +138,6 @@ def main():
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     config = load_config(os.path.join(base_dir, 'config', 'lca_config.yaml'))
 
-    print("Cargando matrices de SimaPro...")
     df_homo = clean_sima_pro_data(
         os.path.join(base_dir, config['paths']['raw_data_homo']),
         config['skip_rows']['homo'],
@@ -137,26 +152,16 @@ def main():
     df_total = pd.concat([df_homo, df_hetero], axis=1)
     df_total = df_total.loc[:, ~df_total.columns.duplicated()]
 
-    print("Buscando dinámicamente los contendientes...")
-
     if 'Climate change' in df_homo.index:
         cc_impacts = df_homo.loc['Climate change'].apply(pd.to_numeric, errors='coerce')
         col_homo = cc_impacts.idxmin()
-        print(f"  -> Campeón Homogéneo detectado: {col_homo}")
     else:
         raise ValueError("No se encuentra 'Climate change' en la matriz para determinar el campeón.")
 
     col_hetero = get_dynamic_column(df_total, ['LAGA', '0,5 MM PAA'])
-    print(f"  -> Sistema Heterogéneo detectado: {col_hetero}")
-
-    # Exclusión relajada para permitir atrapar la luz UV en el polvo base
     col_powder = get_dynamic_column(df_total, ['LAGA'], exclude_kws=['PAA', 'PS', 'PMS', 'H2O2'])
-    print(f"  -> Polvo de catalizador detectado: {col_powder}")
 
-    print("Calculando amortización del catalizador...")
     df_breakeven = calculate_dynamic_breakeven(df_total, col_homo, col_hetero, col_powder, cycles=10)
-
-    print("Generando gráfico de Break-Even...")
     plot_dynamic_breakeven(df_breakeven, "BreakEven_Analysis", config)
 
 

@@ -52,7 +52,7 @@ def plot_scenario_comparison(df, scenario_name, columns_to_compare, config):
 
     ax.set_xticks(x)
     ax.set_xticklabels(df_plot.index, rotation=25, ha='right', fontweight='bold')
-    ax.legend(title='Treatment Strategies', bbox_to_anchor=(1.05, 1), loc='upper left', frameon=True)
+    ax.legend(title='Treatment Strategies', bbox_to_anchor=(1.05, 1), loc='upper left', frameon=False)
 
     ax.set_yscale('log')
     ax.grid(axis='y', linestyle='--', alpha=0.5)

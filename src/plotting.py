@@ -261,7 +261,7 @@ def plot_relative_contribution(df_pct, output_name, config):
     plt.xticks(rotation=45, ha='right')
 
     # Leyenda fuera de la caja perimetral
-    plt.legend(title="Input Phase", bbox_to_anchor=(1.05, 1), loc='upper left', frameon=True)
+    plt.legend(title="Input Phase", bbox_to_anchor=(1.05, 1), loc='upper left', frameon=False)
 
     plt.tight_layout()
 
@@ -276,56 +276,102 @@ def plot_relative_contribution(df_pct, output_name, config):
     plt.close()
     print(f"✅ Gráfico de contribución guardado en: {output_path}")
 
-# Añadir al final de src/plotting.py
 
 def plot_ecoefficiency_matrix(df, output_name, config):
-    plt.style.use(['science', 'no-latex'])
+    try:
+        plt.style.use(['science', 'no-latex'])
+    except OSError:
+        plt.style.use('default')
+
     plt.rcParams.update({"font.family": "Cambria", "font.size": 11, "mathtext.default": "regular"})
 
-    fig, ax = plt.subplots(figsize=(8, 8))
+    fig, ax = plt.subplots(figsize=(10, 8))
 
-    # Dibujar los puntos (scatter)
     ax.scatter(df['EEO_UVC'], df['GWP'], color='#1f77b4', s=100, edgecolor='black', zorder=3)
 
     # ========================================================
-    # DIBUJAR LOS CUADRANTES (Líneas de la Mediana)
+    # ESCALA LOGARÍTMICA Y FORZADO DE MARCAS (NUMERITOS)
     # ========================================================
+    ax.set_yscale('log')
+    ax.set_xscale('log')
+
+    import matplotlib.ticker as ticker
+
+    # Formateador para evitar 10^-3 y forzar números limpios como 0.005
+    formatter = ticker.FuncFormatter(lambda y, _: '{:g}'.format(y))
+
+    # Le decimos al localizador que ponga marcas en el 1, el 2 y el 5 de cada década
+    ax.xaxis.set_major_locator(ticker.LogLocator(base=10.0, subs=(1.0, 2.0, 5.0)))
+    ax.xaxis.set_major_formatter(formatter)
+
+    ax.yaxis.set_major_locator(ticker.LogLocator(base=10.0, subs=(1.0, 2.0, 5.0)))
+    ax.yaxis.set_major_formatter(formatter)
+
+    # DIBUJAR LOS CUADRANTES (Líneas de la Mediana)
     median_eeo = df['EEO_UVC'].median()
     median_gwp = df['GWP'].median()
 
     ax.axvline(median_eeo, color='gray', linestyle='--', alpha=0.7, zorder=1)
     ax.axhline(median_gwp, color='gray', linestyle='--', alpha=0.7, zorder=1)
 
-    # Colorear sutilmente el "Cuadrante Mágico" (Inferior Izquierdo)
-    ax.axvspan(ax.get_xlim()[0], median_eeo, ymin=0,
-               ymax=(median_gwp - ax.get_ylim()[0]) / (ax.get_ylim()[1] - ax.get_ylim()[0]),
-               color='#2ca02c', alpha=0.1, zorder=0)
+    # Colorear el "Cuadrante Mágico" adaptado para ejes logarítmicos
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+    ax.fill_between([xlim[0], median_eeo], ylim[0], median_gwp, color='#2ca02c', alpha=0.1, zorder=0)
 
-    # Añadir las etiquetas a los puntos (formateadas químicamente)
-    for idx, row in df.iterrows():
-        label = format_chem_text(idx)
-        ax.annotate(label, (row['EEO_UVC'], row['GWP']),
-                    xytext=(5, 5), textcoords='offset points',
-                    fontsize=10, fontweight='bold', zorder=4)
+    # Reseteamos los límites para evitar que el fill_between deforme el zoom del gráfico
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
 
-    ax.set_xlabel(r"Photocatalytic E$_{EO}$ (kWh/m$^3$$\cdot$order)", fontweight='bold')
-    ax.set_ylabel(r"Global Warming Potential (kg CO$_2$ eq)", fontweight='bold')
+    # ALGORITMO ANTI-SOLAPAMIENTO DE ETIQUETAS
+    try:
+        from adjustText import adjust_text
+        texts = []
+        for idx, row in df.iterrows():
+            from src.plotting import format_chem_text
+            label = format_chem_text(idx)
+            texts.append(ax.text(row['EEO_UVC'], row['GWP'], label,
+                                 fontsize=9, fontweight='bold', zorder=4))
 
-    # Reglas de la Tesis
-    apply_thesis_style(ax)
+        adjust_text(texts,
+                    arrowprops=dict(arrowstyle='->', color='gray', lw=0.8),
+                    force_text=(0.5, 1.0),
+                    force_points=(0.5, 1.0))
+    except ImportError:
+        df_sorted = df.sort_values(by='EEO_UVC')
+        for i, (idx, row) in enumerate(df_sorted.iterrows()):
+            from src.plotting import format_chem_text
+            label = format_chem_text(idx)
+            y_offset = 15
+            x_offset = 10
+            ax.annotate(
+                label, (row['EEO_UVC'], row['GWP']),
+                xytext=(x_offset, y_offset), textcoords='offset points',
+                fontsize=8, fontweight='bold', zorder=4,
+                bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="lightgray", alpha=0.9),
+                arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=0.1", color='gray')
+            )
+
+    ax.set_xlabel(r"Photocatalytic E$_{EO}$ (kWh/m$^3$$\cdot$order) [Log Scale]", fontweight='bold')
+    ax.set_ylabel(r"Global Warming Potential (kg CO$_2$ eq) [Log Scale]", fontweight='bold')
+
+    try:
+        apply_thesis_style(ax)
+    except NameError:
+        ax.tick_params(which='both', top=False, right=False, left=True, bottom=True)
 
     plt.title("Eco-efficiency Matrix: Energy vs. Climate Impact", fontweight='bold', pad=15)
 
-    # Anotaciones de cuadrante
-    ax.text(0.05, 0.05, "Ideal Region\n(Fast & Green)", transform=ax.transAxes,
-            fontsize=12, color='#2ca02c', fontweight='bold', alpha=0.5)
+    # TEXTO VERDE ANCLADO ARRIBA A LA DERECHA DEL CUADRANTE
+    ax.text(median_eeo * 0.90, median_gwp * 0.90, "Ideal Region\n(Fast & Green)",
+            fontsize=12, color='#2ca02c', fontweight='bold', alpha=0.5,
+            ha='right', va='top', zorder=1)
 
     plt.tight_layout()
+    import os
     output_path = os.path.join(config['paths']['results_dir'], f"{output_name}.png")
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"Matriz de Ecoeficiencia guardada en: {output_path}")
-
 
 # Añadir al final de src/plotting.py
 import seaborn as sns
@@ -421,7 +467,7 @@ def plot_radar_chart(df_scenario, scenario_name, valid_cols, config):
     plt.ylim(0, 1.05)
 
     # ⚠️ LEYENDA A SALVO: Desplazada totalmente a la derecha y centrada verticalmente
-    ax.legend(loc='center left', bbox_to_anchor=(1.15, 0.5), frameon=True, title='Treatment Strategies')
+    ax.legend(loc='center left', bbox_to_anchor=(1.15, 0.5), frameon=False, title='Treatment Strategies')
 
     # Quitamos la línea de contorno exterior para que quede más moderno
     ax.spines['polar'].set_visible(False)

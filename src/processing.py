@@ -1,3 +1,4 @@
+# src/processing.py
 import pandas as pd
 import yaml
 import numpy as np
@@ -11,18 +12,16 @@ def load_config(config_path):
 
 def clean_sima_pro_data(filepath, skip_rows, target_categories=None):
     '''Carga y limpia un archivo de SimaPro, buscando la cabecera dinámicamente.'''
-    df_raw = pd.read_excel(filepath, sheet_name="Sheet1", header=None)
+    df_raw = pd.read_excel(filepath, sheet_name=0, header=None)
 
     start_row = 0
-    # Buscamos en las primeras 60 filas dónde está el texto "Categoría de impacto"
     for i in range(min(60, len(df_raw))):
         if str(df_raw.iloc[i, 0]).startswith("Categoría de impacto"):
             start_row = i
             break
 
-    df = pd.read_excel(filepath, sheet_name="Sheet1", skiprows=start_row)
+    df = pd.read_excel(filepath, sheet_name=0, skiprows=start_row)
 
-    # Eliminar columnas basura de SimaPro (forzando str)
     cols_to_keep = [c for c in df.columns if not str(c).startswith('Unnamed') and c not in ['V.Máximo', 'Unidad']]
     df = df[cols_to_keep]
 
@@ -38,7 +37,6 @@ def clean_sima_pro_data(filepath, skip_rows, target_categories=None):
 
 
 def load_and_merge_sima_data(config):
-    """Carga y fusiona los Excels homogéneo y heterogéneo en una única matriz maestra."""
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     path_homo = os.path.join(base_dir, config['paths']['raw_data_homo'])
     path_hetero = os.path.join(base_dir, config['paths']['raw_data_hetero'])
@@ -53,17 +51,10 @@ def load_and_merge_sima_data(config):
 
 
 def load_icv_data(filepath):
-    '''
-    Carga y limpia el Inventario de Ciclo de Vida de forma dinámicamente tolerante a errores de escritura.
-    '''
     xls = pd.ExcelFile(filepath)
-    # Busca dinámicamente cualquier hoja que contenga 'ICV'. Si no, pilla la última por defecto.
     sheet = next((s for s in xls.sheet_names if 'ICV' in str(s).upper()), xls.sheet_names[-1])
     df = pd.read_excel(filepath, sheet_name=sheet)
 
-    # ========================================================
-    # MAPEO DINÁMICO DE COLUMNAS (Anti-Hardcoding)
-    # ========================================================
     rename_map = {}
     for col in df.columns:
         c_str = str(col).lower()
@@ -78,17 +69,11 @@ def load_icv_data(filepath):
 
     df.rename(columns=rename_map, inplace=True)
 
-    # ========================================================
-    # AUTOCORRECTOR DE TYPOS (Philip vs Philips)
-    # ========================================================
     if 'Equipo Asignado' in df.columns:
         df['Equipo Asignado'] = df['Equipo Asignado'].apply(
             lambda x: 'Philips 15W' if isinstance(x, str) and 'Philip' in x else x
         )
 
-    # ========================================================
-    # FILLNA INTELIGENTE (Números con 0, Textos con vacío)
-    # ========================================================
     for col in df.columns:
         if pd.api.types.is_numeric_dtype(df[col]):
             df[col] = df[col].fillna(0)
@@ -102,7 +87,6 @@ def load_icv_data(filepath):
 
 
 def extract_champions_contribution(df_icv, top_n=5):
-    '''Filtra los tratamientos óptimos de forma DINÁMICA (menor t80) y disgrega la electricidad.'''
     if 'Experimento' not in df_icv.columns:
         df_temp = df_icv.reset_index()
     else:
@@ -128,13 +112,11 @@ def extract_champions_contribution(df_icv, top_n=5):
         axis=1)
 
     cols_impact = ['Electricity (UV-C)', 'Electricity (Stirring)', 'Masa Comercial (kg/m3)', 'Masa Cat. (kg/m3)']
-    # Aseguramos que solo intente procesar columnas que existan realmente
     valid_cols = [c for c in cols_impact if c in df_champs.columns]
 
     df_champs_final = df_champs[valid_cols]
     df_pct = df_champs_final.div(df_champs_final.sum(axis=1), axis=0) * 100
 
-    # Renombrado de leyenda dinámico según las columnas válidas
     legend_map = {
         'Electricity (UV-C)': 'Electricity (UV-C)',
         'Electricity (Stirring)': 'Electricity (Stirring)',
@@ -147,10 +129,6 @@ def extract_champions_contribution(df_icv, top_n=5):
 
 
 def calculate_ecoefficiency_matrix(df_icv, df_homo, df_hetero):
-    '''
-    Calcula el E_EO fotocatalítico y cruza con GWP utilizando análisis de cadenas (Fuzzy Matching),
-    eliminando por completo la necesidad de un diccionario hardcodeado.
-    '''
     if 'Experimento' not in df_icv.columns:
         df_temp = df_icv.reset_index()
     else:
@@ -162,50 +140,52 @@ def calculate_ecoefficiency_matrix(df_icv, df_homo, df_hetero):
     split_ratios = {'Philips 15W': {'uv': 6.0 / 15.0}, 'Apria LED': {'uv': 5.0 / 10.0}}
     orders_of_magnitude = np.log10(5)
 
-    # Agrupamos todas las columnas de SimaPro para el escaneo automático
     sima_cols = {col: 'homo' for col in df_homo.columns}
     sima_cols.update({col: 'hetero' for col in df_hetero.columns})
 
     for exp_icv, row in df_unique.iterrows():
         exp_str = str(exp_icv).upper().replace(',', '.')
-
-        # Filtro de lógica química: detectamos los ingredientes del experimento
         keywords = []
+
+        # Filtro de lógica química actualizado (El que arregla tu problema)
         if 'NACL' in exp_str:
             keywords = ['NACL']
         elif 'H2O2' in exp_str and 'LAGA' not in exp_str:
-            keywords = ['H2O2', 'HOM']
-        elif 'PS' in exp_str and 'LAGA' not in exp_str:
-            keywords = ['PS', 'HOM']
+            keywords = ['H2O2']
+        elif 'PS' in exp_str and 'LAGA' not in exp_str and 'PMS' not in exp_str:
+            keywords = ['PS']
+        elif 'PMS' in exp_str and 'LAGA' not in exp_str:
+            keywords = ['PMS']
         elif 'LAGA' in exp_str and 'PAA' in exp_str:
-            keywords = ['LAGA', 'PAA']
-        elif 'LAGA' in exp_str and 'PS' in exp_str:
-            keywords = ['LAGA', 'PS']
+            keywords = ['LAGA']
+            if ' 0.1 MM PAA' in exp_str or ' 0,1 MM PAA' in exp_str:
+                keywords.append('0,1 MM PAA')
+            elif ' 0.5 MM PAA' in exp_str or ' 0,5 MM PAA' in exp_str:
+                keywords.append('0,5 MM PAA')
+            elif ' 1.0 MM PAA' in exp_str or ' 1MM PAA' in exp_str:
+                keywords.append('1MM PAA')
+        elif 'LAGA' in exp_str and 'PMS' in exp_str:
+            keywords = ['LAGA', 'PMS']
+        elif 'LAGA' in exp_str and 'PAA' not in exp_str and 'PMS' not in exp_str and 'PS' not in exp_str:
+            keywords = ['LAGA']  # POLVO PURO
 
-        # Si no encaja en las comparativas diana, saltamos al siguiente
-        if not keywords:
-            continue
+        if not keywords: continue
 
-        # Escáner: Busca la columna de SimaPro que contenga estas palabras clave
         best_col = None
         for col in sima_cols.keys():
             c_upper = str(col).upper()
-            if all(kw in c_upper for kw in keywords):
+            if all(kw.replace(' ', '') in c_upper.replace(' ', '') for kw in keywords):
                 best_col = col
                 break
 
-        if not best_col:
-            continue
+        if not best_col: continue
 
         elec_total = row.get('Electricidad Total (kWh/m3)', 0)
-        # Ignorar blancos o nulos puros
-        if elec_total == 0:
-            continue
+        if elec_total == 0: continue
 
         equipo = row.get('Equipo Asignado', 'Philips 15W')
         elec_uv = elec_total * split_ratios.get(equipo, {'uv': 1.0})['uv']
         eeo = elec_uv / orders_of_magnitude
-
         target_df = df_homo if sima_cols[best_col] == 'homo' else df_hetero
 
         try:
@@ -213,14 +193,12 @@ def calculate_ecoefficiency_matrix(df_icv, df_homo, df_hetero):
                 gwp_val = target_df.loc['Climate change', best_col]
             else:
                 gwp_val = target_df.iloc[0][best_col]
-
-            if isinstance(gwp_val, pd.Series):
-                gwp_val = gwp_val.iloc[0]
-
+            if isinstance(gwp_val, pd.Series): gwp_val = gwp_val.iloc[0]
             results.append({
                 'Treatment': exp_icv,
                 'EEO_UVC': float(eeo),
-                'GWP': float(gwp_val)
+                'GWP': float(gwp_val),
+                'Type': 'Homo' if sima_cols[best_col] == 'homo' else 'Hetero'
             })
         except Exception:
             pass
@@ -230,7 +208,6 @@ def calculate_ecoefficiency_matrix(df_icv, df_homo, df_hetero):
 
 
 def dynamic_impact_filter(df_total, target_metric='Climate change', top_n=4):
-    '''Criba dinámica de impactos.'''
     if target_metric not in df_total.index:
         return df_total
 
@@ -249,7 +226,6 @@ def dynamic_impact_filter(df_total, target_metric='Climate change', top_n=4):
 
 
 def calculate_breakeven_cycles(df, col_homo, col_hetero, col_powder, cycles=10):
-    """Calcula el impacto diluido del reuso del catalizador en N ciclos."""
     for col in [col_homo, col_hetero, col_powder]:
         if col not in df.columns:
             raise ValueError(f"Error: La columna '{col}' no se encuentra en la matriz unificada.")
