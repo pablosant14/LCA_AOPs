@@ -29,7 +29,7 @@ def get_dynamic_column(df, required_kws, exclude_kws=None):
     raise ValueError(f"No se encontró columna para kws={required_kws}")
 
 
-def calculate_dynamic_breakeven(df, col_homo, col_hetero, col_powder, cycles=10):
+def calculate_dynamic_breakeven(df, col_homo, col_hetero, col_powder, cycles=10, make_up_loss=0.05):
     for col in [col_homo, col_hetero, col_powder]:
         if col not in df.columns:
             raise ValueError(f"🚨 Error: La columna '{col}' no se encuentra en la matriz unificada.")
@@ -40,7 +40,11 @@ def calculate_dynamic_breakeven(df, col_homo, col_hetero, col_powder, cycles=10)
 
     results = []
     for n in range(1, cycles + 1):
-        current_hetero = impact_hetero_op + (impact_powder / n)
+        # El factor realista: Asumimos una pérdida y reposición (make-up) del catalizador
+        # Impacto amortizado = Impacto inicial del polvo * [1 + (n - 1) * pérdida] / n
+        amortized_powder = impact_powder * (1 + (n - 1) * make_up_loss) / n
+        current_hetero = impact_hetero_op + amortized_powder
+
         for cat in df.index:
             results.append({
                 'Category': cat, 'Cycle': n,
@@ -63,7 +67,6 @@ def plot_dynamic_breakeven(df_breakeven, filename, config):
 
     plt.rcParams.update({"font.family": "Cambria", "font.size": 11, "mathtext.default": "regular"})
 
-    # Diccionario de unidades estándar para inyectar en el eje Y
     unit_map = {
         'Climate change': 'kg CO$_2$ eq',
         'Human toxicity, non-cancer': 'CTUh',
@@ -79,7 +82,6 @@ def plot_dynamic_breakeven(df_breakeven, filename, config):
     gs = gridspec.GridSpec(2, 6, figure=fig)
     axes = []
 
-    # Asignación de posiciones simétricas (3 arriba, 2 centrados abajo)
     if num_cats > 0: axes.append(fig.add_subplot(gs[0, 0:2]))
     if num_cats > 1: axes.append(fig.add_subplot(gs[0, 2:4]))
     if num_cats > 2: axes.append(fig.add_subplot(gs[0, 4:6]))
@@ -106,17 +108,23 @@ def plot_dynamic_breakeven(df_breakeven, filename, config):
         ax.set_title(cat, fontweight='bold', fontsize=12)
         ax.set_xlabel('Number of Reuse Cycles', fontweight='bold')
 
-        # Asignación dinámica de la unidad
         unit = unit_map.get(cat, 'Units')
         ax.set_ylabel(f'Impact Value ({unit})', fontweight='bold')
 
         ax.set_xticks(df_breakeven['Cycle'].unique())
         ax.grid(False)
 
+        # Configuración estética estricta
         try:
             apply_thesis_style(ax)
+            ax.tick_params(which='both', top=False, right=False)
         except NameError:
-            ax.tick_params(which='both', top=False, right=False, left=True, bottom=True)
+            pass
+
+        # Purgado manual de ticks en los ejes superior y derecho (Prioritario)
+        ax.tick_params(which='both', top=False, right=False, left=True, bottom=True)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
 
         ax.legend(frameon=True, loc='best', fontsize=9)
 
@@ -161,7 +169,8 @@ def main():
     col_hetero = get_dynamic_column(df_total, ['LAGA', '0,5 MM PAA'])
     col_powder = get_dynamic_column(df_total, ['LAGA'], exclude_kws=['PAA', 'PS', 'PMS', 'H2O2'])
 
-    df_breakeven = calculate_dynamic_breakeven(df_total, col_homo, col_hetero, col_powder, cycles=10)
+    # Incorporamos el factor realista de reposición del catalizador
+    df_breakeven = calculate_dynamic_breakeven(df_total, col_homo, col_hetero, col_powder, cycles=10, make_up_loss=0.05)
     plot_dynamic_breakeven(df_breakeven, "BreakEven_Analysis", config)
 
 
