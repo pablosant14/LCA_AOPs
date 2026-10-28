@@ -182,13 +182,12 @@ def plot_relative_contribution(df_pct, output_name, config):
     print(f"Gráfico de contribución disgregado al 100% guardado en: {output_path}")
 
 
-# Añadir al final de src/plotting.py
-
 def plot_ecoefficiency_matrix(df, output_name, config):
     plt.style.use(['science', 'no-latex'])
-    plt.rcParams.update({"font.family": "Cambria", "font.size": 11, "mathtext.default": "regular"})
+    plt.rcParams.update({"font.family": "Cambria", "font.size": 9, "mathtext.default": "regular"})
 
-    fig, ax = plt.subplots(figsize=(8, 8))
+    # Ensanchamos ligeramente el lienzo para dar aire a los textos largos
+    fig, ax = plt.subplots(figsize=(10, 8))
 
     # Dibujar los puntos (scatter)
     ax.scatter(df['EEO_UVC'], df['GWP'], color='#1f77b4', s=100, edgecolor='black', zorder=3)
@@ -207,34 +206,59 @@ def plot_ecoefficiency_matrix(df, output_name, config):
                ymax=(median_gwp - ax.get_ylim()[0]) / (ax.get_ylim()[1] - ax.get_ylim()[0]),
                color='#2ca02c', alpha=0.1, zorder=0)
 
-    # Añadir las etiquetas a los puntos (formateadas químicamente)
-    for idx, row in df.iterrows():
-        label = format_chem_text(idx)
-        ax.annotate(label, (row['EEO_UVC'], row['GWP']),
-                    xytext=(5, 5), textcoords='offset points',
-                    fontsize=10, fontweight='bold', zorder=4)
+    # ========================================================
+    # ALGORITMO ANTI-SOLAPAMIENTO DE ETIQUETAS
+    # ========================================================
+    try:
+        from adjustText import adjust_text
+        texts = []
+        for idx, row in df.iterrows():
+            label = format_chem_text(idx)
+            texts.append(ax.text(row['EEO_UVC'], row['GWP'], label,
+                                 fontsize=9, fontweight='bold', zorder=4))
+
+        adjust_text(texts,
+                    arrowprops=dict(arrowstyle='->', color='gray', lw=0.8),
+                    force_text=(0.5, 1.0),
+                    force_points=(0.5, 1.0))
+    except ImportError:
+        df_sorted = df.sort_values(by='EEO_UVC')
+        for i, (idx, row) in enumerate(df_sorted.iterrows()):
+            label = format_chem_text(idx)
+            if row['GWP'] >= df['GWP'].max() * 0.95:
+                y_offset = -30 - (i % 4) * 20
+                x_offset = 0
+            else:
+                y_offset = 15
+                x_offset = 10
+
+            ax.annotate(
+                label, (row['EEO_UVC'], row['GWP']),
+                xytext=(x_offset, y_offset), textcoords='offset points',
+                fontsize=8, fontweight='bold', zorder=4,
+                bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="lightgray", alpha=0.9),
+                arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=0.1", color='gray')
+            )
 
     ax.set_xlabel(r"Photocatalytic E$_{EO}$ (kWh/m$^3$$\cdot$order)", fontweight='bold')
     ax.set_ylabel(r"Global Warming Potential (kg CO$_2$ eq)", fontweight='bold')
 
-    # Reglas de la Tesis
     apply_thesis_style(ax)
 
     plt.title("Eco-efficiency Matrix: Energy vs. Climate Impact", fontweight='bold', pad=15)
 
-    # Anotaciones de cuadrante
-    ax.text(0.05, 0.05, "Ideal Region\n(Fast & Green)", transform=ax.transAxes,
-            fontsize=12, color='#2ca02c', fontweight='bold', alpha=0.5)
+    # ========================================================
+    # TEXTO DEL CUADRANTE (Desplazado a la esquina superior derecha del área verde)
+    # ========================================================
+    # Multiplicamos por 0.95 para dejarle un pequeño margen respecto a las líneas punteadas
+    ax.text(median_eeo * 0.95, median_gwp * 0.95, "Ideal Region\n(Fast & Green)",
+            fontsize=12, color='#2ca02c', fontweight='bold', alpha=0.5,
+            ha='right', va='top', zorder=1)
 
     plt.tight_layout()
     output_path = os.path.join(config['paths']['results_dir'], f"{output_name}.png")
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"Matriz de Ecoeficiencia guardada en: {output_path}")
-
-
-# Añadir al final de src/plotting.py
-import seaborn as sns
 
 
 def plot_impact_heatmap(df, output_name, config):

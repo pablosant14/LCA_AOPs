@@ -9,17 +9,14 @@ from src.plotting import plot_impact_comparison
 
 
 def main():
-    # Calculamos la ruta absoluta de la raíz del proyecto dinámicamente
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     config_path = os.path.join(base_dir, 'config', 'lca_config.yaml')
 
     config = load_config(config_path)
 
-    # IMPORTANTE: También hay que arreglar las rutas relativas del YAML
     raw_homo_path = os.path.join(base_dir, config['paths']['raw_data_homo'])
     raw_hetero_path = os.path.join(base_dir, config['paths']['raw_data_hetero'])
 
-    # Pasamos la ruta de resultados absoluta también
     config['paths']['results_dir'] = os.path.join(base_dir, config['paths']['results_dir'])
 
     # 1. Procesar Homogéneos
@@ -40,9 +37,6 @@ def main():
     )
     plot_impact_comparison(df_hetero, "Heterogeneous_Comparison", config)
 
-
-if __name__ == "__main__":
-    main()
 
 if __name__ == "__main__":
     main()

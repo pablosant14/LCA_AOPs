@@ -11,7 +11,8 @@ def load_config(config_path):
 
 def clean_sima_pro_data(filepath, skip_rows, target_categories=None):
     '''Carga y limpia un archivo de SimaPro, buscando la cabecera dinámicamente.'''
-    df_raw = pd.read_excel(filepath, sheet_name="Sheet1", header=None)
+    # Usamos sheet_name=0 para que siempre lea la primera hoja, tenga el nombre que tenga
+    df_raw = pd.read_excel(filepath, sheet_name=0, header=None)
 
     start_row = 0
     # Buscamos en las primeras 60 filas dónde está el texto "Categoría de impacto"
@@ -20,7 +21,7 @@ def clean_sima_pro_data(filepath, skip_rows, target_categories=None):
             start_row = i
             break
 
-    df = pd.read_excel(filepath, sheet_name="Sheet1", skiprows=start_row)
+    df = pd.read_excel(filepath, sheet_name=0, skiprows=start_row)
 
     # Eliminar columnas basura de SimaPro (forzando str)
     cols_to_keep = [c for c in df.columns if not str(c).startswith('Unnamed') and c not in ['V.Máximo', 'Unidad']]
@@ -35,7 +36,6 @@ def clean_sima_pro_data(filepath, skip_rows, target_categories=None):
     df_filtered = df_filtered[~df_filtered.index.duplicated(keep='first')]
 
     return df_filtered
-
 
 def load_and_merge_sima_data(config):
     """Carga y fusiona los Excels homogéneo y heterogéneo en una única matriz maestra."""
@@ -147,10 +147,6 @@ def extract_champions_contribution(df_icv, top_n=5):
 
 
 def calculate_ecoefficiency_matrix(df_icv, df_homo, df_hetero):
-    '''
-    Calcula el E_EO fotocatalítico y cruza con GWP utilizando análisis de cadenas (Fuzzy Matching),
-    eliminando por completo la necesidad de un diccionario hardcodeado.
-    '''
     if 'Experimento' not in df_icv.columns:
         df_temp = df_icv.reset_index()
     else:
@@ -162,50 +158,51 @@ def calculate_ecoefficiency_matrix(df_icv, df_homo, df_hetero):
     split_ratios = {'Philips 15W': {'uv': 6.0 / 15.0}, 'Apria LED': {'uv': 5.0 / 10.0}}
     orders_of_magnitude = np.log10(5)
 
-    # Agrupamos todas las columnas de SimaPro para el escaneo automático
     sima_cols = {col: 'homo' for col in df_homo.columns}
     sima_cols.update({col: 'hetero' for col in df_hetero.columns})
 
     for exp_icv, row in df_unique.iterrows():
         exp_str = str(exp_icv).upper().replace(',', '.')
-
-        # Filtro de lógica química: detectamos los ingredientes del experimento
         keywords = []
+
+        # Filtro de lógica química (Forzando la concentración para PAA)
         if 'NACL' in exp_str:
             keywords = ['NACL']
         elif 'H2O2' in exp_str and 'LAGA' not in exp_str:
-            keywords = ['H2O2', 'HOM']
-        elif 'PS' in exp_str and 'LAGA' not in exp_str:
-            keywords = ['PS', 'HOM']
+            keywords = ['H2O2']
+        elif 'PS' in exp_str and 'LAGA' not in exp_str and 'PMS' not in exp_str:
+            keywords = ['PS']
+        elif 'PMS' in exp_str and 'LAGA' not in exp_str:
+            keywords = ['PMS']
         elif 'LAGA' in exp_str and 'PAA' in exp_str:
-            keywords = ['LAGA', 'PAA']
-        elif 'LAGA' in exp_str and 'PS' in exp_str:
-            keywords = ['LAGA', 'PS']
+            keywords = ['LAGA']
+            # Bloqueo de fuerza bruta para diferenciar el 0.1, 0.5 y 1.0 sin confundirse con el 0.5 g/L del catalizador
+            if ' 0.1 MM PAA' in exp_str or ' 0,1 MM PAA' in exp_str:
+                keywords.append('0,1 MM PAA')
+            elif ' 0.5 MM PAA' in exp_str or ' 0,5 MM PAA' in exp_str:
+                keywords.append('0,5 MM PAA')
+            elif ' 1.0 MM PAA' in exp_str or ' 1MM PAA' in exp_str:
+                keywords.append('1MM PAA')
+        elif 'LAGA' in exp_str and 'PMS' in exp_str:
+            keywords = ['LAGA', 'PMS']
 
-        # Si no encaja en las comparativas diana, saltamos al siguiente
-        if not keywords:
-            continue
+        if not keywords: continue
 
-        # Escáner: Busca la columna de SimaPro que contenga estas palabras clave
         best_col = None
         for col in sima_cols.keys():
             c_upper = str(col).upper()
-            if all(kw in c_upper for kw in keywords):
+            if all(kw.replace(' ', '') in c_upper.replace(' ', '') for kw in keywords):
                 best_col = col
                 break
 
-        if not best_col:
-            continue
+        if not best_col: continue
 
         elec_total = row.get('Electricidad Total (kWh/m3)', 0)
-        # Ignorar blancos o nulos puros
-        if elec_total == 0:
-            continue
+        if elec_total == 0: continue
 
         equipo = row.get('Equipo Asignado', 'Philips 15W')
         elec_uv = elec_total * split_ratios.get(equipo, {'uv': 1.0})['uv']
         eeo = elec_uv / orders_of_magnitude
-
         target_df = df_homo if sima_cols[best_col] == 'homo' else df_hetero
 
         try:
@@ -213,14 +210,12 @@ def calculate_ecoefficiency_matrix(df_icv, df_homo, df_hetero):
                 gwp_val = target_df.loc['Climate change', best_col]
             else:
                 gwp_val = target_df.iloc[0][best_col]
-
-            if isinstance(gwp_val, pd.Series):
-                gwp_val = gwp_val.iloc[0]
-
+            if isinstance(gwp_val, pd.Series): gwp_val = gwp_val.iloc[0]
             results.append({
                 'Treatment': exp_icv,
                 'EEO_UVC': float(eeo),
-                'GWP': float(gwp_val)
+                'GWP': float(gwp_val),
+                'Type': 'Homo' if sima_cols[best_col] == 'homo' else 'Hetero'
             })
         except Exception:
             pass
